@@ -1,0 +1,283 @@
+---
+title: "EPL scraping"
+author: "Richyyl"
+date: "25 January 2019"
+output: 
+  html_document: 
+    keep_md: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##This piece of work will focus on building a statistical model to predict the outcomes of premier league matches in England. It will be comprised of three parts, all aiming to use skills I have acquired over the past couple of years.
+
+*Part one: Obtaining data on both current players (past three years) and the last four seasons of matches
+
+*Part two: Building a statistical model to determine what variables have the largest impact on game outcome, excluding goals scored
+
+*Part three: Utilise the knowledge from part two to make predictions, using aggregated data from players to provide team statistics
+
+####This markdown document will serve as part one, focussing on obtainign the data through webscraping.
+
+As always its best to start by loading any packaged you might need. It's likely that websites may require dynamic scraping, as such a combination of Rselenium and Rvest will likely work best, along with the tidyverse for general data cleanup
+```{r Load packages}
+library(tidyverse)
+library(RSelenium)
+library(rvest)
+library(httr)
+library(seleniumPipes)
+```
+
+Right, first things first lets find a good site to scrape match results from and see what I can pull, this will also need to include match stats for the model.
+```{r Test team scraping functions}
+
+test_url <- "http://www.squawka.com/en/football-team-rankings?c=29&s=1&st=101,103,104,106,117,111,211,213,313,312"
+
+rD <- rsDriver(browser = "firefox", port = 4444L)
+remDr <- rD$client
+remDr$navigate(test_url)
+
+X <- read_html(remDr$getPageSource()[[1]])
+
+headers <- X %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "jgckrp", " " ))]') %>%
+  html_text() %>%
+  unique()
+
+Scores <- X %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "bRLgxe", " " ))]') %>%
+  html_text() %>%
+  matrix(ncol=10, byrow=TRUE) %>%
+  as_tibble() %>%
+  rename_all(funs(c(headers)))
+
+teams <- X %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "gRqZkC", " " ))]') %>%
+  html_text() %>%
+  enframe(name = NULL) %>%
+  rename(Team = value) %>%
+  bind_cols(Scores)
+  
+```
+
+Since all this works and pulls a nice set of data for a specific season and all clubs I can go ahead and start to iterate using map. For each season I'm going to collect some attacking and defending data, which involves selecting the urls by hand, making a list and then iterating. I do plan to autimate this at a later point, but for now I'm happy with doing it by hand since there arent many URLs.
+```{r Make team scraping function and url list}
+
+team_scraper <- function(scrape_url){
+
+remDr$navigate(scrape_url)
+  
+Sys.sleep(10)
+
+page <- read_html(remDr$getPageSource()[[1]])
+  
+headers <- page %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "jgckrp", " " ))]') %>%
+  html_text() %>%
+  unique()
+
+Scores <- page %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "bRLgxe", " " ))]') %>%
+  html_text() %>%
+  matrix(ncol=10, byrow=TRUE) %>%
+  as_tibble() %>%
+  rename_all(funs(c(headers)))
+
+teams <- page %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "gRqZkC", " " ))]') %>%
+  html_text() %>%
+  enframe(name = NULL) %>%
+  rename(Team = value) %>%
+  bind_cols(Scores)  
+   
+}
+
+name_vec <- paste0(rep(c("Attacking", "Defending"),4),"_",(c("15","15","16","16","17","17","18","18")))
+
+team_urls <- c("http://www.squawka.com/en/football-team-rankings?c=29&s=1&period=full-match&display=numeric&st=101,103,104,105,117,111,113,211,212,201", "http://www.squawka.com/en/football-team-rankings?c=29&s=1&period=full-match&display=numeric&st=312,307,401,402,406,502,503,602,604,701","http://www.squawka.com/en/football-team-rankings?c=29&s=4&period=full-match&display=numeric&st=101,103,104,105,117,111,113,211,212,201","http://www.squawka.com/en/football-team-rankings?c=29&s=4&period=full-match&display=numeric&st=312,307,401,402,406,502,503,602,604,701","http://www.squawka.com/en/football-team-rankings?c=29&s=97&period=full-match&display=numeric&st=101,103,104,105,117,111,113,211,212,201","http://www.squawka.com/en/football-team-rankings?c=29&s=97&period=full-match&display=numeric&st=312,307,401,402,406,502,503,602,604,701","http://www.squawka.com/en/football-team-rankings?c=29&s=97&period=full-match&display=numeric&st=101,103,104,105,117,111,113,211,212,201", "http://www.squawka.com/en/football-team-rankings?c=29&s=100&period=full-match&display=numeric&st=312,307,401,402,406,502,503,602,604,701")
+
+team_url_df <- tibble(x = name_vec,
+                 y = team_urls)
+
+team_url_list <- as.list(team_url_df$y) %>%
+  set_names(team_url_df$x)
+
+```
+
+Now the vectors and lists are all made up its time to collect the data!
+```{r scrape team data}
+rD <- rsDriver(browser = "firefox", port = 4464L)
+remDr <- rD$client
+
+match_stats <- map(team_url_list, team_scraper)
+
+match_stats_df <- map_df(match_stats, bind_rows, .id = "Data")
+
+team_attack_stats <- match_stats_df %>%
+  filter(str_detect(Data, "Attacking")) %>%
+  select(1:12)
+
+sum(is.na(team_attack_stats))
+
+write_csv(team_attack_stats, "team_attack_stats.csv")
+
+team_defence_stats <- match_stats_df %>%
+  filter(str_detect(Data, "Defending")) %>%
+  select(c(1:2, 13:22))
+
+sum(is.na(team_defence_stats))
+
+write_csv(team_defence_stats, "team_defence_stats.csv")
+
+```
+
+Now we have all the club level data its time to collect the player level data! Luckily the same website holds player level information for the same stats, meaning I can utilise the same scraping infrastructure. However, it does need to be tweaked slightly to pull in the number of matches and also to scroll down the page and continue scraping, so we get all the players. As such, first thing to do is manually make a new list of URLs for the players and then test the old infrastructure to see where tweaks are required.
+```{r Test player scraping functions and make url list}
+
+player_name_vec <- c("Attacking_16", "Defending_16", "Attacking_17", "Defending_17", "Attacking_18", "Defending_18")
+
+player_urls <- c("http://www.squawka.com/en/football-player-rankings?c=29&s=4&period=full-match&played=true&display=numeric&st=101,103,104,105,117,111,113,211,212","http://www.squawka.com/en/football-player-rankings?c=29&s=4&period=full-match&played=true&display=numeric&st=312,307,401,402,406,502,503,602,604","http://www.squawka.com/en/football-player-rankings?c=29&s=97&period=full-match&played=true&display=numeric&st=101,103,104,105,117,111,113,211,212","http://www.squawka.com/en/football-player-rankings?c=29&s=97&period=full-match&played=true&display=numeric&st=312,307,401,402,406,502,503,602,604","http://www.squawka.com/en/football-player-rankings?c=29&s=100&period=full-match&played=true&display=numeric&st=101,103,104,105,117,111,113,211,212","http://www.squawka.com/en/football-player-rankings?c=29&s=100&period=full-match&played=true&display=numeric&st=312,307,401,402,406,502,503,602,604")
+
+player_url_df <- tibble(x = player_name_vec,
+                 y = player_urls)
+
+player_url_list <- as.list(player_url_df$y) %>%
+  set_names(player_url_df$x)
+
+rD <- rsDriver(browser = "firefox", port = 4454L)
+remDr <- rD$client
+
+remDr$navigate(player_url_list[[1]])
+
+Y <- read_html(remDr$getPageSource()[[1]])
+
+headers <- Y %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "jgckrp", " " ))]') %>%
+  html_text() %>%
+  unique()
+
+scores <- Y %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "bRLgxe", " " ))]') %>%
+  html_text() %>%
+  matrix(ncol=9, byrow=TRUE) %>%
+  as_tibble() %>%
+  rename_all(funs(c(headers)))
+
+players <- Y %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "jPUbTB", " " ))]') %>%
+  html_text() %>%
+  enframe(name = NULL) %>%
+  rename(Team = value)
+  
+games <- Y %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "gRUmwo", " " ))]') %>%
+  html_text() %>%
+  matrix(ncol=1, byrow=TRUE) %>%
+  as_tibble() %>%
+  rename(Games = V1) %>%
+  mutate(Games = str_extract(Games, "^.{2}"))
+
+player_stats <- bind_cols(players, games, scores)
+
+more <- remDr$findElement(using = 'css selector', "span:nth-child(1) > div")
+more$clickElement()
+
+```
+
+Now that we have the infrastructure pieces set it's time to build them up into a function! Sadly I had to resort to using a for loop within a  fucntion for this due to needing to load the URL once then scroll the page and then click the next button multiple times, without re-openeing the original URL. I'm aware theres likely a much faster way to do this using map, so any feedback on that would be greatly welcomed!
+```{r Scrape team data}
+
+player_stats_final <- tibble()
+
+player_scraper <- function(scrape_url, vec){
+
+remDr$navigate(scrape_url)
+Sys.sleep(5)
+  
+for(i in 1:length(vec)){
+
+Y <- read_html(remDr$getPageSource()[[1]])
+
+headers <- Y %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "jgckrp", " " ))]') %>%
+  html_text() %>%
+  unique()
+
+scores <- Y %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "bRLgxe", " " ))]') %>%
+  html_text() %>%
+  matrix(ncol=9, byrow=TRUE) %>%
+  as_tibble() %>%
+  rename_all(funs(c(headers)))
+
+players <- Y %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "jPUbTB", " " ))]') %>%
+  html_text() %>%
+  enframe(name = NULL) %>%
+  rename(Name = value)
+  
+games <- Y %>%
+  html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "gRUmwo", " " ))]') %>%
+  html_text() %>%
+  matrix(ncol=1, byrow=TRUE) %>%
+  as_tibble() %>%
+  rename(Games = V1) %>%
+  mutate(Games = str_extract(Games, "^.{2}"))
+
+player_stats <- bind_cols(players, games, scores)
+
+player_stats_final <- bind_rows(player_stats_final, player_stats) %>%
+  distinct(Name, .keep_all = T)
+
+scroll <- remDr$findElement('css', "body")
+
+scroll$sendKeysToElement(list(key = "end"))
+
+more <- remDr$findElement(using = 'css selector', "span:nth-child(1) > div")
+
+more$clickElement()
+
+Sys.sleep(5)
+}
+return(player_stats_final)
+}
+
+rD <- rsDriver(browser = "firefox", port = 4456L)
+remDr <- rD$client
+remDr$setWindowSize(1530L, 825L)
+
+player_stats <- map(player_url_list, ~player_scraper(scrape_url = .x,
+                                                      vec = seq(1,20,1)))
+
+player_stats_df <- map_df(player_stats, bind_rows, .id = "Data")
+
+player_attack_stats <- player_stats_df %>%
+  filter(str_detect(Data, "Attacking")) %>%
+  select(1:12)
+
+sum(is.na(player_attack_stats))
+
+write_csv(player_attack_stats, "player_attack_stats.csv")
+
+player_defence_stats <- player_stats_df %>%
+  filter(str_detect(Data, "Defending")) %>%
+  select(c(1:2, 13:21))
+
+sum(is.na(player_defence_stats))
+
+write_csv(player_defence_stats, "player_defence_stats.csv")
+
+```
+
+Right, now we have four data sets, two relating to teams and two relating to players, both covering the same statistics for attack and defence. Before we go into the next phase, building a model, lets just take a quick skim through some of the data to see what quality it is and if we might have to look elsewhere ( I have a feeling this is the case for the player stats just from eyeballing the website).
+```{r Check team data}
+
+```
+
+```{r Check player data}
+
+```
+
