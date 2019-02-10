@@ -20,15 +20,14 @@ knitr::opts_chunk$set(echo = TRUE)
 
 *Part three: Utilise the knowledge from part two to make predictions, using aggregated data from players to provide team statistics
 
-####This markdown document will serve as part one, focussing on obtainign the data through webscraping.
+####This markdown document will serve as part one, focussing on obtaining the data through webscraping.
 
-As always its best to start by loading any packaged you might need. It's likely that websites may require dynamic scraping, as such a combination of Rselenium and Rvest will likely work best, along with the tidyverse for general data cleanup
+As always its best to start by loading any packages you might need. It's likely that websites may require dynamic scraping, as such a combination of Rselenium and Rvest will likely work best, along with the tidyverse for general data cleanup
 ```{r Load packages}
 library(tidyverse)
 library(RSelenium)
 library(rvest)
 library(httr)
-library(seleniumPipes)
 ```
 
 Right, first things first lets find a good site to scrape match results from and see what I can pull, this will also need to include match stats for the model.
@@ -97,7 +96,7 @@ teams <- page %>%
 
 name_vec <- paste0(rep(c("Attacking", "Defending"),4),"_",(c("15","15","16","16","17","17","18","18")))
 
-team_urls <- c("http://www.squawka.com/en/football-team-rankings?c=29&s=1&period=full-match&display=numeric&st=101,103,104,105,117,111,113,211,212,201", "http://www.squawka.com/en/football-team-rankings?c=29&s=1&period=full-match&display=numeric&st=312,307,401,402,406,502,503,602,604,701","http://www.squawka.com/en/football-team-rankings?c=29&s=4&period=full-match&display=numeric&st=101,103,104,105,117,111,113,211,212,201","http://www.squawka.com/en/football-team-rankings?c=29&s=4&period=full-match&display=numeric&st=312,307,401,402,406,502,503,602,604,701","http://www.squawka.com/en/football-team-rankings?c=29&s=97&period=full-match&display=numeric&st=101,103,104,105,117,111,113,211,212,201","http://www.squawka.com/en/football-team-rankings?c=29&s=97&period=full-match&display=numeric&st=312,307,401,402,406,502,503,602,604,701","http://www.squawka.com/en/football-team-rankings?c=29&s=97&period=full-match&display=numeric&st=101,103,104,105,117,111,113,211,212,201", "http://www.squawka.com/en/football-team-rankings?c=29&s=100&period=full-match&display=numeric&st=312,307,401,402,406,502,503,602,604,701")
+team_urls <- c("http://www.squawka.com/en/football-team-rankings?c=29&s=1&period=ninety-minutes&display=numeric&st=101,103,104,105,117,111,113,211,212,201", "http://www.squawka.com/en/football-team-rankings?c=29&s=1&period=ninety-minutes&display=numeric&st=312,307,401,402,406,502,503,602,604,701","http://www.squawka.com/en/football-team-rankings?c=29&s=4&period=ninety-minutes&display=numeric&st=101,103,104,105,117,111,113,211,212,201","http://www.squawka.com/en/football-team-rankings?c=29&s=4&period=ninety-minutes&display=numeric&st=312,307,401,402,406,502,503,602,604,701","http://www.squawka.com/en/football-team-rankings?c=29&s=97&period=ninety-minutes&display=numeric&st=101,103,104,105,117,111,113,211,212,201","http://www.squawka.com/en/football-team-rankings?c=29&s=97&period=ninety-minutes&display=numeric&st=312,307,401,402,406,502,503,602,604,701","http://www.squawka.com/en/football-team-rankings?c=29&s=97&period=ninety-minutes&display=numeric&st=101,103,104,105,117,111,113,211,212,201", "http://www.squawka.com/en/football-team-rankings?c=29&s=100&period=ninety-minutes&display=numeric&st=312,307,401,402,406,502,503,602,604,701")
 
 team_url_df <- tibble(x = name_vec,
                  y = team_urls)
@@ -134,23 +133,30 @@ write_csv(team_defence_stats, "team_defence_stats.csv")
 
 ```
 
-Now we have all the club level data its time to collect the player level data! Luckily the same website holds player level information for the same stats, meaning I can utilise the same scraping infrastructure. However, it does need to be tweaked slightly to pull in the number of matches and also to scroll down the page and continue scraping, so we get all the players. As such, first thing to do is manually make a new list of URLs for the players and then test the old infrastructure to see where tweaks are required.
+Now we have all the club level data its time to collect the player level data! Luckily the same website holds player level information for the same stats, meaning I can utilise the same scraping infrastructure. However, it does need to be tweaked slightly to pull in the number of matches and also to scroll down the page and continue scraping, so we get all the players. As such, first thing to do is manually make a new list of URLs for the players and then test the old infrastructure to see where tweaks are required. Another issue after checked the data is that the website appears to not liek showing more thna 4 stats per player, or you start to get missing data. As such I've had to replicate the URLS. 
 ```{r Test player scraping functions and make url list}
 
-player_name_vec <- c("Attacking_16", "Defending_16", "Attacking_17", "Defending_17", "Attacking_18", "Defending_18")
+player_table_vec <- c("Attacking_16",  "Attacking_17","Attacking_18", "Defending_16", "Defending_17", "Defending_18")
 
-player_urls <- c("http://www.squawka.com/en/football-player-rankings?c=29&s=4&period=full-match&played=true&display=numeric&st=101,103,104,105,117,111,113,211,212","http://www.squawka.com/en/football-player-rankings?c=29&s=4&period=full-match&played=true&display=numeric&st=312,307,401,402,406,502,503,602,604","http://www.squawka.com/en/football-player-rankings?c=29&s=97&period=full-match&played=true&display=numeric&st=101,103,104,105,117,111,113,211,212","http://www.squawka.com/en/football-player-rankings?c=29&s=97&period=full-match&played=true&display=numeric&st=312,307,401,402,406,502,503,602,604","http://www.squawka.com/en/football-player-rankings?c=29&s=100&period=full-match&played=true&display=numeric&st=101,103,104,105,117,111,113,211,212","http://www.squawka.com/en/football-player-rankings?c=29&s=100&period=full-match&played=true&display=numeric&st=312,307,401,402,406,502,503,602,604")
+base_attacking_urls <- c("http://www.squawka.com/en/football-player-rankings?c=29&s=4&period=ninety-minutes&played=true&display=numeric&st=","http://www.squawka.com/en/football-player-rankings?c=29&s=97&period=ninety-minutes&played=true&display=numeric&st=","http://www.squawka.com/en/football-player-rankings?c=29&s=100&period=ninety-minutes&played=true&display=numeric&st=")
 
-player_url_df <- tibble(x = player_name_vec,
-                 y = player_urls)
+base_defending_urls <- c("http://www.squawka.com/en/football-player-rankings?c=29&s=4&period=ninety-minutes&played=true&display=numeric&st=","http://www.squawka.com/en/football-player-rankings?c=29&s=97&period=ninety-minutes&played=true&display=numeric&st=","http://www.squawka.com/en/football-player-rankings?c=29&s=100&period=ninety-minutes&played=true&display=numeric&st=")
 
-player_url_list <- as.list(player_url_df$y) %>%
-  set_names(player_url_df$x)
+first_four_stats_player_urls <- c(paste0(base_attacking_urls, "101,103,104,105"), paste0(base_defending_urls, "312,307,401,402"))
+
+second_three_stats_player_urls <- c(paste0(base_attacking_urls, "117,111,113"), paste0(base_defending_urls, "406,502,503"))
+
+final_two_stats_player_urls <- c(paste0(base_attacking_urls, "211,212"), paste0(base_defending_urls, "602,604"))
+
+all_player_urls <- list(first_four_stats_player_urls, second_three_stats_player_urls, final_two_stats_player_urls)
+
+player_url_list <- map(.x = all_player_urls, ~as.list(.x) %>%
+                         set_names(player_table_vec))
 
 rD <- rsDriver(browser = "firefox", port = 4454L)
 remDr <- rD$client
 
-remDr$navigate(player_url_list[[1]])
+remDr$navigate(player_url_list[[1]][[1]])
 
 Y <- read_html(remDr$getPageSource()[[1]])
 
@@ -182,13 +188,16 @@ games <- Y %>%
 
 player_stats <- bind_cols(players, games, scores)
 
+scroll <- remDr$findElement('css', "body")
+scroll$sendKeysToElement(list(key = "end"))
+
 more <- remDr$findElement(using = 'css selector', "span:nth-child(1) > div")
 more$clickElement()
 
 ```
 
-Now that we have the infrastructure pieces set it's time to build them up into a function! Sadly I had to resort to using a for loop within a  fucntion for this due to needing to load the URL once then scroll the page and then click the next button multiple times, without re-openeing the original URL. I'm aware theres likely a much faster way to do this using map, so any feedback on that would be greatly welcomed!
-```{r Scrape team data}
+Now that we have the infrastructure pieces set it's time to build them up into a function! Sadly I had to resort to using a for loop within a  fucntion for this due to needing to load the URL once then scroll the page and then click the next button multiple times, without re-openeing the original URL. I'm aware theres likely a much faster way to do this using map, so any feedback on that would be greatly welcomed! Also includes some error handling for the fact that the more button may dissapear.
+```{r Scrape player data}
 
 player_stats_final <- tibble()
 
@@ -209,7 +218,7 @@ headers <- Y %>%
 scores <- Y %>%
   html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "bRLgxe", " " ))]') %>%
   html_text() %>%
-  matrix(ncol=9, byrow=TRUE) %>%
+  matrix(ncol=length(headers), byrow=TRUE) %>%
   as_tibble() %>%
   rename_all(funs(c(headers)))
 
@@ -236,11 +245,16 @@ scroll <- remDr$findElement('css', "body")
 
 scroll$sendKeysToElement(list(key = "end"))
 
-more <- remDr$findElement(using = 'css selector', "span:nth-child(1) > div")
+check <- suppressMessages(try(remDr$findElement(using = 'css selector', "span:nth-child(1) > div"), silent = TRUE))
 
-more$clickElement()
+if (any(class(check) != "try-error")) {
+more <- remDr$findElement(using = 'css selector', "span:nth-child(1) > div")
+more$clickElement()} else {
+  Sys.sleep(1)
+}
 
 Sys.sleep(5)
+
 }
 return(player_stats_final)
 }
@@ -249,22 +263,53 @@ rD <- rsDriver(browser = "firefox", port = 4456L)
 remDr <- rD$client
 remDr$setWindowSize(1530L, 825L)
 
-player_stats <- map(player_url_list, ~player_scraper(scrape_url = .x,
-                                                      vec = seq(1,20,1)))
+player_stats <- map(player_url_list, ~map(.x, ~player_scraper(scrape_url = .x,
+                                                      vec = seq(1,20,1))))
 
-player_stats_df <- map_df(player_stats, bind_rows, .id = "Data")
+table_joiner <- function(w, x, y, z){
 
-player_attack_stats <- player_stats_df %>%
-  filter(str_detect(Data, "Attacking")) %>%
-  select(1:12)
+a <- w[[1]][[x]]
+
+b <- w[[2]][[x]]
+
+c <- w[[3]][[x]]
+
+joined_frame_1 <- inner_join(a,b, by = c("Name", "Games")) %>%
+  inner_join(c, by = c("Name", "Games")) %>%
+  mutate(data = "Season_16")
+
+d <- w[[1]][[y]]
+
+e <- w[[2]][[y]]
+
+f <- w[[3]][[y]]
+
+joined_frame_2 <- inner_join(d,e, by = c("Name", "Games")) %>%
+  inner_join(f, by = c("Name", "Games")) %>%
+  mutate(data = "Season_17")
+
+
+g <- w[[1]][[z]]
+
+h <- w[[2]][[z]]
+
+i <- w[[3]][[z]]
+
+joined_frame_3 <- inner_join(g,h, by = c("Name", "Games")) %>%
+  inner_join(i, by = c("Name", "Games")) %>%
+  mutate(data = "Season_18")
+
+final_frame <- bind_rows(joined_frame_1, joined_frame_2, joined_frame_3) %>% select(length(.), everything())
+  
+}
+
+player_attack_stats <- table_joiner(player_stats, 1, 2, 3)
+
+player_defence_stats <- table_joiner(player_stats, 4, 5, 6)
 
 sum(is.na(player_attack_stats))
 
 write_csv(player_attack_stats, "player_attack_stats.csv")
-
-player_defence_stats <- player_stats_df %>%
-  filter(str_detect(Data, "Defending")) %>%
-  select(c(1:2, 13:21))
 
 sum(is.na(player_defence_stats))
 
@@ -272,12 +317,38 @@ write_csv(player_defence_stats, "player_defence_stats.csv")
 
 ```
 
-Right, now we have four data sets, two relating to teams and two relating to players, both covering the same statistics for attack and defence. Before we go into the next phase, building a model, lets just take a quick skim through some of the data to see what quality it is and if we might have to look elsewhere ( I have a feeling this is the case for the player stats just from eyeballing the website).
-```{r Check team data}
+Now we have all the player and team data we need to scrape the final piece, ie what clubs do the players play for now. Luckily we're past the January transfer window so no one should be moving around, so I can just go ahead and scrape the current lost of EPL players and their associated clubs.
+```{r Scrape players clubs}
+
+club_url <- "https://www.worldfootball.net/players_list/eng-premier-league-2018-2019/nach-name/"
+
+page_vec <- seq(1,12,1)
+
+club_urls <- paste0(club_url, page_vec) %>%
+  as.list()
+
+club_scraper <- function(x){
+  
+  club_table <- read_html(x) %>%
+    html_node(xpath = '//*[@id="site"]/div[3]/div[1]/div/div[3]/div/table') %>%
+    html_table()
+  
+}
+
+current_clubs <- map(club_urls, club_scraper)
+
+current_clubs_df <- map_df(current_clubs, bind_cols) %>%
+  select(1,3) %>%
+  separate(Player, c("First", "Last"), sep = " ", extra = "merge")
+
+single_names <- filter(current_clubs_df, is.na(Last)) %>%
+  rename(Full_name = First) %>%
+  select(-2)
+
+double_names <- filter(current_clubs_df, !is.na(Last)) %>%
+  mutate(Full_name = paste0(str_sub(First, 1, 1), ".", " ", Last)) %>%
+  select(4,3)
+
+all_players <- bind_rows(double_names, single_names)
 
 ```
-
-```{r Check player data}
-
-```
-

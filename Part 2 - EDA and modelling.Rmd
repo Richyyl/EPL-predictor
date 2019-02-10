@@ -1,0 +1,81 @@
+---
+title: "EDA & model building"
+author: "Richyyl"
+date: "3 February 2019"
+output: 
+  html_document: 
+    keep_md: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+####This markdown document will serve as part two, focussing on exploting the data collected in part one and building the final model to test on player data, as such it will be focussed at the team level.
+
+As before, first things to do is load packages, for this piece the requirements should be filled by both the tidyverse and tidtmodels packages.
+```{r Load packages}
+library(tidyverse)
+library(tidymodels)
+theme_set(theme_minimal())
+```
+
+At the end of the last segement I'd managed to scrape five key datasets, the first two relating to attacking and defensive stats for clubs, the second two the same but at a player level and the final one a list of players and their current clubs. I'm going to start off exploring the player data just to make sure it can give the insight we need, and then move into a deeper dive of the club level data.
+```{r Check player data}
+
+player_attack <- read_csv("player_attack_stats.csv")
+
+player_defence <- read_csv("player_defence_stats.csv")
+
+current_players_attacking <- inner_join(all_players, player_attack, by = c("Full_name" = "Name")) %>%
+  janitor::clean_names()
+
+current_players_defending <- inner_join(all_players, player_defence, by = c("Full_name" = "Name")) %>%
+  janitor::clean_names()
+
+check_attacking_data <- current_players_attacking %>%
+  filter(data == "Season_17") %>%
+  arrange(desc(chances_created)) %>%
+  View()
+
+check_defending_data <- current_players_defending %>%
+  filter(data == "Season_17") %>%
+  arrange(desc(tackles_made)) %>%
+  View()
+
+players_per_team <- current_players_attacking %>%
+  filter(data == "Season_18") %>%
+  count(team)
+
+```
+
+Since the player data appears to be in a good shape, ie enough of it should be there with enough players to put together some teams for predictions, its time to have a good look at the team data and see what really impacts how many goals you score or concede.
+```{r Check team data}
+
+team_attack <- read_csv("team_attack_stats.csv") %>%
+  janitor::clean_names()
+
+team_defence <- read_csv("team_defence_stats.csv") %>%
+  janitor::clean_names()
+
+##How does passing impact goals?
+  
+team_attack %>%
+  ggplot(aes(x = passes_completed, y = goals_scored, col = factor(data))) +
+  geom_point()
+
+team_attack %>%
+  ggplot(aes(x = forward_passes, y = goals_scored, col = factor(data))) +
+  geom_point()
+
+##And shots?
+  
+team_attack %>%
+  ggplot(aes(x = shots_on_target, y = goals_scored, col = factor(data))) +
+  geom_point()
+  
+
+```
+
