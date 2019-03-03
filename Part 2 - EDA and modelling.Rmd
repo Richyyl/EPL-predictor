@@ -19,6 +19,11 @@ As before, first things to do is load packages, for this piece the requirements 
 ```{r Load packages}
 library(tidyverse)
 library(tidymodels)
+library(janitor)
+library(ggrepel)
+library(gghighlight)
+library(ranger)
+library(glmnet)
 theme_set(theme_minimal())
 ```
 
@@ -52,30 +57,434 @@ players_per_team <- current_players_attacking %>%
 ```
 
 Since the player data appears to be in a good shape, ie enough of it should be there with enough players to put together some teams for predictions, its time to have a good look at the team data and see what really impacts how many goals you score or concede.
-```{r Check team data}
+```{r Load team data}
 
 team_attack <- read_csv("team_attack_stats.csv") %>%
-  janitor::clean_names()
+  janitor::clean_names() %>%
+  mutate(avg_pass_length = as.numeric(str_remove(avg_pass_length, "m"))) %>%
+         separate(data, into = c("Stats", "Season"), sep = "_") %>%
+         mutate(Season = case_when(Season == "15" ~ "15/16",
+                                   Season == "16" ~ "16/17",
+                                   Season == "17" ~ "17/18",
+                                   T ~ "18/19"),
+                Season = factor(Season))
 
 team_defence <- read_csv("team_defence_stats.csv") %>%
-  janitor::clean_names()
+  janitor::clean_names() %>%
+  separate(data, into = c("Stats", "Season"), sep = "_") %>%
+         mutate(Season = case_when(Season == "15" ~ "15/16",
+                                   Season == "16" ~ "16/17",
+                                   Season == "17" ~ "17/18",
+                                   T ~ "18/19"),
+                Season = factor(Season))
+  
 
-##How does passing impact goals?
+```
+First lets see how passing relates to goals scored, which youd expect to be a fairly linear trend with some outliers, as most teams that pass lots and move well hold the ball and ultimatly score, however some teams are able to soak up the attacks and move on the counter. From the graph we can see that two teams who are at opposite ends of the passing spectrum show quite a significant difference in goals per 90 minutes.
+```{r Check passing stats}
+
+passing_labels <- team_attack %>%
+  filter(team %in% c("Manchester City", "Burnley"))
   
 team_attack %>%
-  ggplot(aes(x = passes_completed, y = goals_scored, col = factor(data))) +
-  geom_point()
+  ggplot(aes(x = passes_completed, y = goals_scored)) +
+  geom_point(aes(col = Season), position = "jitter") +
+  labs(x = "Average completed passes, per 90 minutes",
+       y = "Average goals scored, per 90 minutes",
+       col = "Season",
+       title = "Teams that pass more generally score more goals") +
+  gghighlight(team %in% c("Manchester City", "Burnley"), use_direct_label = F) +
+  scale_x_continuous(labels = scales::comma_format()) +
+  expand_limits(x = 0, y = 0) +
+  geom_text_repel(data = passing_labels, aes(x = passes_completed, y = goals_scored, label = team))
+  
 
-team_attack %>%
-  ggplot(aes(x = forward_passes, y = goals_scored, col = factor(data))) +
-  geom_point()
+```
+Again, wed expect a linear trend here, as the more times you're on to shoot the more you're likely to score, which is shown by the clear linear trend. However, what is interesting is that more chnaces doesnt appear to improve your on target ratio, meaning its unlikely you'll get better if you just keep shooting. 
+```{r Check chances}
 
-##And shots?
+chances_labels <- team_attack %>%
+  filter(team %in% c("Manchester United", "Newcastle United"))
   
 team_attack %>%
-  ggplot(aes(x = shots_on_target, y = goals_scored, col = factor(data))) +
-  geom_point()
+  ggplot(aes(x = chances_created, y = goals_scored)) +
+  geom_point(aes(col = Season), position = "jitter") +
+  labs(x = "Average chances created, per 90 minutes",
+       y = "Average goals scored, per 90 minutes",
+       col = "Season",
+       title = "More chances leads to more goals") +
+  gghighlight(team %in% c("Manchester United", "Newcastle United"), use_direct_label = F) +
+  scale_x_continuous(labels = scales::comma_format()) +
+  expand_limits(x = 0, y = 0) +
+  geom_text_repel(data = chances_labels, aes(x = chances_created, y = goals_scored, label = team))
+
+## does having more chances mean you're more likely to put them away?
+
+team_attack %>%
+  mutate(shot_ratio = shots_on_target / shots_off_target) %>%
+  ggplot(aes(x = chances_created, y = shot_ratio)) +
+  geom_point(aes(col = Season), position = "jitter") +
+  labs(x = "Average chances created, per 90 minutes",
+       y = "Average shots on target - off target ratio, \nper 90 minutes",
+       col = "Season",
+       title = "More chances doesnt always mean you'll hit the target",
+       caption = "Horizontal line highlights a 1-1 ratio") + 
+  expand_limits(x = 0, y = 0) +
+  geom_hline(yintercept = 1)
+
+
+```
+Moving on to some defence stats now, with both the number of tackles and tackle success on display. As can be seen from the two charts there is little to no correlation between these metrics and how many goals you might concede, which probably isnt what you'd expect. Interestignly howevr there seems to be less tackling in this season so far, on average, than the past 3 seasons.
+```{r Check tackles}
+
+team_defence %>%
+  ggplot(aes(x = tackles_made, y = totals_goals_conceded)) +
+  geom_point(aes(col = Season)) +
+  expand_limits(x = 0, y = 0) +
+  labs(x = "Average number of tackles, per 90 minutes",
+       y = "Average goals conceded, per 90 minutes",
+       title = "There appears to be little correlation between\n how much you tackle and how much you concede")
   
+
+team_defence %>%
+  mutate(tackle_success = tackles_won / tackles_made) %>%
+  ggplot(aes(x = tackle_success, y = totals_goals_conceded)) +
+  geom_point(aes(col = Season)) +
+  expand_limits(x = 0, y = 0) +
+  labs(x = "Average tackle success ratio, per 90 minutes",
+       y = "Average goals conceded, per 90 minutes",
+       title = "With tackle success also showing\n little correlation against goals conceded")
+
+
+```
+For the final defence metric I'm going to explore saves per goal, which youd expect to increase with the number of goals conceded as it shows how much pressure the team is under, likely leading to mistakes. As predicted theres a slight linear trend between the two, with the graph also highlighting the low number of saves and goals conceded by Manchester Utd in recent seasons, under their more defensive approach spearheaded by the now absent Jose Mourinho.
+```{r Check saves per goal}
+
+saves_labels <- team_defence %>%
+  filter(team %in% c("Manchester United", "Chelsea", "Burnley"))
+
+team_defence %>%
+  ggplot(aes(x = total_saves, y = totals_goals_conceded)) +
+  geom_point(aes(col = Season)) +
+  expand_limits(x = 0, y = 0) +
+  labs(x = "Average number of saves, per 90 minutes",
+       y = "Average goals conceded, per 90 minutes",
+       title = "Number of saves however does appear to\n upwardly trend with conceding goals") +
+  geom_text(data = saves_labels, aes(x = total_saves, y = totals_goals_conceded, label = team), hjust = 0.5, check_overlap = T, vjust = 1, nudge_x = -1)
+
+```
+Now that we'vce had a quick look at the data its time to build some models, starting with a simple linear regression and a random forest, with a paramter grid. Firstly however I need to split the data into test and training sets, and then further split the training sets into 5 fold cross validation sets, each with 5 repeats to provide averages for our assessment statistics.
+```{r Prep the data}
+
+attack_final <- team_attack %>%
+  mutate(shot_ratio = shots_on_target / shots_off_target)
+
+defence_final <- team_defence
+
+set.seed(101)
+
+#create initital train test splits and then produce 5 fold cross validation sets
+
+attack_split <- initial_split(attack_final[, 4:14])
+
+defence_split <- initial_split(defence_final[, 4:13])
+
+attack_train <- training(attack_split)
+
+attack_test <- testing(attack_split)
+
+defence_train <- training(defence_split)
+
+defence_test <- testing(defence_split)
+
+attack_cross <- vfold_cv(attack_train, v = 5, repeats = 5)
+
+defence_cross <- vfold_cv(defence_train, v = 5, repeats = 5)
+
+```
+With the data prepped its time to make the model objects, using the new interface provided by the parsnip package. In addiiton this package allows easy creation of parameter grids, which can then be combined with the base model as a nested column of a dataframe.
+```{r Make the model objects}
+
+linear_mod <- linear_reg() %>%
+  set_engine("lm")
+
+random_forest <- rand_forest(mode = "regression", mtry = varying(), trees = varying(), min_n = varying()) %>%
+  set_engine("ranger", importance = "impurity")
+
+forest_models <- grid_random(
+  trees %>% range_set(c(1000, 10000)),
+  min_n %>% range_set(c(1, 12)),
+  mtry %>% range_set(c(5,9)),
+  size = 5) %>%
+  mutate(specs = merge(., random_forest))
+
+full_attack_rf <- crossing(attack_cross, forest_models)
+
+full_defence_rf <- crossing(defence_cross, forest_models)
+
+
+```
+Now its time to fit the models and calculate the assessment statistics, where I'll be using the standard combo of R2 and RMSE to judge the models.
+```{r Fit the models}
+
+attack_form <- goals_scored ~ .
+
+defence_form <- totals_goals_conceded ~ .
+
+fit_model <- function(split, spec, form) {
+fit(
+object = spec,
+formula = form,
+data = analysis(split) # <- pull out training set
+)
+}
+
+attack_lm <- attack_cross %>%
+  mutate(model = map(splits, fit_model, linear_mod, attack_form))
+
+defence_lm <- defence_cross %>%
+  mutate(model = map(splits, fit_model, linear_mod, defence_form))
+
+attack_rf <- full_attack_rf %>%
+  mutate(model = map2(splits, specs, ~fit_model(split = .x, spec = .y, form = attack_form)))
+
+defence_rf <- full_defence_rf %>%
+  mutate(model = map2(splits, specs, ~fit_model(split = .x, spec = .y, form = defence_form)))
+
+```
+
+```{r make predictions and calculate error}
+
+compute_pred <- function(split, model) {
+# Extract the assessment set
+assess <- assessment(split)
+# Compute predictions (a df is returned)
+pred <- predict(model, new_data = assess)
+bind_cols(assess, pred)
+}
+
+compute_perf <- function(pred_df, t) {
+# Create a function that calculates rmse and rsq and returns a data frame
+t <- enquo(t)
+numeric_metrics <- metric_set(rmse, rsq)
+numeric_metrics(
+pred_df,
+truth = !!t,
+estimate = .pred
+)
+}
+
+attack_lm <- attack_lm %>%
+  mutate(pred = map2(splits, model, compute_pred),
+         perf = map(pred, ~compute_perf(pred_df = .x, t = goals_scored)))
+
+defence_lm <- defence_lm %>%
+  mutate(pred = map2(splits, model, compute_pred),
+         perf = map(pred, ~compute_perf(pred_df = .x, t = totals_goals_conceded)))
+
+attack_rf <- attack_rf %>%
+  mutate(pred = map2(splits, model, compute_pred),
+         perf = map(pred, ~compute_perf(pred_df = .x, t = goals_scored)))
+
+defence_rf <- defence_rf %>%
+  mutate(pred = map2(splits, model, compute_pred),
+         perf = map(pred, ~compute_perf(pred_df = .x, t = totals_goals_conceded)))
+
+```
+As can be seen from the below charts, for both datasets the linear model appears to outshine any of the random forest models for both R2 and RMSE.
+```{r Extract error and plot}
+
+error_sum <- function(x, a = NULL, b = NULL, c = NULL) {
+
+if(is.null(a)){
+
+  x %>%
+unnest(perf) %>%
+group_by(.metric) %>%
+summarise(
+.avg = mean(.estimate),
+.sd = sd(.estimate)
+)} else{  
+a <- ensym(a)
+b <- ensym(b)
+c <- ensym(c)
+
+x %>%
+unnest(perf) %>%
+group_by(.metric, !!a, !!b, !!c) %>%
+summarise(
+.avg = mean(.estimate),
+.sd = sd(.estimate))
+}
+}
+
+attack_lm_error <- error_sum(attack_lm)
+
+defence_lm_error <- error_sum(defence_lm)
+
+attack_rf_error <- error_sum(attack_rf, "trees", "min_n", "mtry")
+
+defence_rf_error <- error_sum(defence_rf, "trees", "min_n", "mtry")
+
+attack_error <- attack_lm_error %>%
+  mutate(method = "lm") %>%
+  bind_rows(unite(attack_rf_error, method, trees, min_n, mtry, sep = "-")) %>%
+  mutate(ymin = .avg - .sd,
+         ymax = .avg + .sd)
+
+defence_error <- defence_lm_error %>%
+  mutate(method = "lm") %>%
+  bind_rows(unite(defence_rf_error, method, trees, min_n, mtry, sep = "-")) %>%
+  mutate(ymin = .avg - .sd,
+         ymax = .avg + .sd)
+
+attack_error %>%
+  ggplot(aes(x = method, y = .avg, col = method)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ymin, ymax = ymax)) +
+  facet_wrap(~.metric)
+
+defence_error %>%
+  ggplot(aes(x = method, y = .avg, col = method)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ymin, ymax = ymax)) +
+  facet_wrap(~.metric)
+
+
+```
+One of the better aspects of the random forest model is that we can look to see what variables had the biggest impact, which for regression models in ranger is given by which variables accounted for the most variation at each node split. As can be seen from the below charts, chances, shots on target and assists were the most important for predicting goals scored and blocks, saves and clearances for predicting goals conceded.
+```{r Produce variable importance plot for rf models}
+
+attacking_variables <- tibble(variable = names(attack_final[c(4:12, 14)]))
+
+attacking_importance <- attack_rf %>%
+  select(model) %>%
+  .[[1]] %>%
+  map("fit") %>%
+  map("variable.importance") %>%
+  bind_rows() %>%
+  bind_cols(attacking_variables) %>%
+  select(6, everything()) %>%
+  gather(model, score, 2:6) %>%
+  group_by(variable) %>%
+  summarise(mean_var = mean(score)/100)
+
+attacking_importance %>%
+  mutate(variable = str_to_sentence(str_replace_all(variable, "_", " ")),
+         variable = fct_reorder(variable, -mean_var)) %>%
+  ggplot(aes(x = variable, y = mean_var, col = reorder(variable, mean_var))) +
+  geom_point(show.legend = F) +
+  coord_flip() +
+  labs(y = "Decrease in MSE at each node",
+       x = "Variable",
+       title = "Assists, shots and chances have the most impact\n on predicting goals scored",
+       col = "") +
+  scale_y_continuous(labels = scales::percent_format())
+
+defensive_variables <- tibble(variable = names(team_defence[4:12]))
+
+defensive_importance <- defence_rf %>%
+  select(model) %>%
+  .[[1]] %>%
+  map("fit") %>%
+  map("variable.importance") %>%
+  bind_rows() %>%
+  bind_cols(defensive_variables) %>%
+  select(6, everything()) %>%
+  gather(model, score, 2:6) %>%
+  group_by(variable) %>%
+  summarise(mean_var = mean(score)/100)
+
+defensive_importance %>%
+  mutate(variable = str_to_sentence(str_replace_all(variable, "_", " ")),
+         variable = fct_reorder(variable, -mean_var)) %>%
+  ggplot(aes(x = variable, y = mean_var, col = reorder(variable, mean_var))) +
+  geom_point(show.legend = F) +
+  coord_flip() +
+  labs(y = "Decrease in MSE at each node",
+       x = "Variable",
+       title = "Clearances and saves have the most impact\n on predicting goals conceded",
+       col = "") +
+  scale_y_continuous(labels = scales::percent_format())
+
+
+```
+Due to the large amount of variation accounted for by only a few variables in each model a good way to proceed would be to run a ridge regression, which due to the penalty against low impact variables may be able to outperform te simple linear regression. As with the other sets of models, the parsnip interface is used to both construct the model object and a paramter grid to test different penalty values. However, again there appears to be no benefit to this method over the linear regression model, making it the best choice to go forwards with for this analysis.
+```{r Attempt ridge regression and compare to lm}
+
+ridge_mod <- linear_reg(penalty = varying(), mixture = 0) %>%
+  set_engine("glmnet")
+  
+ridge_models <- grid_regular(
+  penalty, levels = 15) %>%
+  mutate(specs = merge(., ridge_mod))
+
+full_attack_ridge <- crossing(attack_cross, ridge_models)
+
+full_defence_ridge <- crossing(defence_cross, ridge_models)
+
+attack_ridge <- full_attack_ridge %>%
+  mutate(model = map2(splits, specs, ~fit_model(split = .x, spec = .y, form = attack_form))) %>%
+  mutate(pred = map2(splits, model, compute_pred),
+         perf = map(pred, ~compute_perf(pred_df = .x, t = goals_scored)))
+
+defence_ridge <- full_defence_ridge %>%
+  mutate(model = map2(splits, specs, ~fit_model(split = .x, spec = .y, form = defence_form))) %>%
+  mutate(pred = map2(splits, model, compute_pred),
+         perf = map(pred, ~compute_perf(pred_df = .x, t = totals_goals_conceded)))
+
+attack_ridge_error <- error_sum(attack_ridge, "penalty","penalty","penalty") %>%
+  mutate(penalty = as.character(penalty))
+
+defence_ridge_error <- error_sum(defence_ridge, "penalty","penalty","penalty") %>%
+  mutate(penalty = as.character(penalty))
+
+attack_ridge_error <- attack_lm_error %>%
+  mutate(penalty = "lm") %>%
+  bind_rows(attack_ridge_error) %>%
+  mutate(ymin = .avg - .sd,
+         ymax = .avg + .sd)
+
+defence_ridge_error <- defence_lm_error %>%
+  mutate(penalty = "lm") %>%
+  bind_rows(defence_ridge_error) %>%
+  mutate(ymin = .avg - .sd,
+         ymax = .avg + .sd)
+
+attack_ridge_error %>%
+  ggplot(aes(x = penalty, y = .avg, col = penalty)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ymin, ymax = ymax)) +
+  facet_wrap(~.metric)
+
+defence_ridge_error %>%
+  ggplot(aes(x = penalty, y = .avg, col = penalty)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ymin, ymax = ymax)) +
+  facet_wrap(~.metric)
+
+
+```
+The final stage of this section is to fit the a linear regression model to the full training data set and test its predictive capabiltities on the unseen test dataset. For the attacking dataset the lm showed an error of ~0.5 goals, covering around 91% of the variation in teh dataset. For the defensive dataset the linear model showed an error 0f 0.44 goals per game, covering around 93% variation. All in all these models seem appropriate to run with for this analysis, which I'll be utilising them in combination with some aggregated player data to try and predict some outcomes of upcoming matches!
+```{r Fit the final LM model and run on the test data}
+
+attack_final_lm <- fit(object = linear_mod,
+formula = attack_form,
+data = attack_train)
+
+attack_pred_final <- predict(attack_final_lm, select(attack_test, -goals_scored)) %>%
+  bind_cols(select(attack_test, goals_scored)) %>%
+  compute_perf(., goals_scored)
+
+defence_final_lm <- fit(object = linear_mod,
+formula = defence_form,
+data = defence_train)
+
+defence_pred_final <- predict(defence_final_lm, select(defence_test, -totals_goals_conceded)) %>%
+  bind_cols(select(defence_test, totals_goals_conceded)) %>%
+  compute_perf(., totals_goals_conceded)
+
+
 
 ```
 
